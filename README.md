@@ -154,44 +154,35 @@ GET http://127.0.0.1:8000/currencies/list
 
 ## 🔹 GitHub Integration
 
-### Initialize Git Repository
+### Quick Setup (Автоматично)
 
-1. **Navigate to project directory:**
-   ```bash
-   cd Exchange/FastAPI/fxhub_backend
-   ```
+Якщо Git репозиторій вже ініціалізовано, просто запусти:
 
-2. **Initialize Git repository:**
-   ```bash
-   git init
-   ```
+```bash
+python setup_github.py
+```
 
-3. **Add all files (`.env` is excluded via `.gitignore`):**
-   ```bash
-   git add .
-   ```
+Скрипт перевірить налаштування та допоможе з push на GitHub.
 
-4. **Create initial commit:**
-   ```bash
-   git commit -m "Initial commit: FastAPI backend for FX Hub"
-   ```
-
-### Connect to GitHub
+### Manual Setup
 
 1. **Create a new repository on GitHub:**
    - Go to https://github.com/new
    - Repository name: `fxhub_backend`
+   - Description: `FastAPI backend for FX Hub with Supabase integration`
    - Choose public or private
    - **Do NOT** initialize with README, .gitignore, or license (we already have these)
+   - Click **"Create repository"**
 
 2. **Add remote and push:**
    ```bash
-   git remote add origin https://github.com/USERNAME/fxhub_backend.git
+   git remote add origin https://github.com/kulishdenis-Tech/fxhub_backend.git
    git branch -M main
    git push -u origin main
    ```
 
-   Replace `USERNAME` with your GitHub username.
+   > **Note**: Якщо Git запитує credentials, використай Personal Access Token замість пароля.
+   > Створити токен: GitHub Settings → Developer settings → Personal access tokens → Generate new token (classic) → вибери scope `repo`
 
 ### Verify `.gitignore`
 
