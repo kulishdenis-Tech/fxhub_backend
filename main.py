@@ -1,15 +1,53 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from supabase_client import supabase
 from datetime import datetime
+import logging
+
+# Налаштування логування
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="FX Hub Backend", version="1.0.0")
+
+# CORS middleware для Flutter мобільного додатку
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # TODO: обмежити на fxhub.app для production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
 async def root():
+    """Root endpoint with API information"""
     return {"message": "FX Hub Backend API", "version": "1.0.0"}
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring and Flutter app status.
+    Returns API status and database connection status.
+    """
+    try:
+        # Перевірка підключення до Supabase
+        test_query = supabase.table("channels").select("id").limit(1).execute()
+        db_status = "connected" if test_query.data is not None else "error"
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        db_status = "error"
+    
+    return {
+        "status": "ok",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "database": db_status,
+        "version": "1.0.0"
+    }
 
 
 @app.get("/rates/bestrate")
@@ -163,9 +201,14 @@ async def get_best_rates(
         return JSONResponse(status_code=200, content=final_results)
         
     except Exception as e:
+        logger.error(f"Error in get_best_rates: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={
+                "success": False,
+                "error": "Internal server error",
+                "message": str(e)
+            }
         )
 
 
@@ -185,9 +228,14 @@ async def get_exchangers_list():
             content={"exchangers": exchanger_names}
         )
     except Exception as e:
+        logger.error(f"Error in get_exchangers_list: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={
+                "success": False,
+                "error": "Internal server error",
+                "message": str(e)
+            }
         )
 
 
@@ -229,7 +277,12 @@ async def get_currencies_list():
             }
         )
     except Exception as e:
+        logger.error(f"Error in get_currencies_list: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={
+                "success": False,
+                "error": "Internal server error",
+                "message": str(e)
+            }
         )
