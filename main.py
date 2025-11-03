@@ -23,14 +23,17 @@ except Exception as e:
 app = FastAPI(title="FX Hub Backend", version="1.0.0")
 
 
-def find_previous_rate(channel_id: int, currency_a: str, currency_b: str, current_buy: Optional[float], current_sell: Optional[float], channel_name: str):
+def find_previous_rate(channel_id: int, currency_a: str, currency_b: str, current_buy: Optional[float], current_sell: Optional[float], channel_name: str, compare_value_type: str = "both"):
     """
     Знаходить попередній запис курсу для конкретного обмінника та валютної пари.
     
-    Логіка:
-    1. Запитуємо останні 10 записів для цього обмінника та пари (відсортовані за timestamp DESC)
-    2. Пропускаємо дублікати (де buy і sell рівні поточним значенням)
-    3. Зупиняємося при першому записі, де хоча б одне значення відрізняється
+    Логіка skip-duplicate:
+    1. Запитуємо останні 100 записів для цього обмінника та пари (відсортовані за timestamp DESC)
+    2. Пропускаємо дублікати залежно від compare_value_type:
+       - "buy": порівнюємо тільки buy значення (для розрахунку buy тренду)
+       - "sell": порівнюємо тільки sell значення (для розрахунку sell тренду)
+       - "both": порівнюємо обидва buy і sell (застарілий режим)
+    3. Зупиняємося при першому записі, де значення відрізняється
     4. Якщо всі попередні значення ідентичні → повертаємо None (trend = "stable")
     
     Args:
@@ -40,15 +43,16 @@ def find_previous_rate(channel_id: int, currency_a: str, currency_b: str, curren
         current_buy: Поточне значення buy
         current_sell: Поточне значення sell
         channel_name: Назва обмінника (для логування)
+        compare_value_type: Що порівнювати для skip-duplicate: "buy", "sell", або "both"
     
     Returns:
         dict з полями "buy" та "sell" (попередні значення) або None якщо всі однакові
     """
     try:
-        # Запитуємо останні 10 записів для цього обмінника та валютної пари
+        # Запитуємо останні 100 записів для цього обмінника та валютної пари
         query = supabase.table("rates").select(
             "buy, sell, edited"
-        ).eq("channel_id", channel_id).eq("currency_a", currency_a).eq("currency_b", currency_b).order("edited", desc=True).limit(10)
+        ).eq("channel_id", channel_id).eq("currency_a", currency_a).eq("currency_b", currency_b).order("edited", desc=True).limit(100)
         
         response = query.execute()
         
@@ -62,18 +66,38 @@ def find_previous_rate(channel_id: int, currency_a: str, currency_b: str, curren
             prev_buy = record.get("buy")
             prev_sell = record.get("sell")
             
-            # Перевіряємо чи поточні значення відрізняються від попередніх
-            buy_different = (current_buy is not None and prev_buy is not None and abs(current_buy - prev_buy) > 0.0001) or \
-                           (current_buy is None) != (prev_buy is None)
-            sell_different = (current_sell is not None and prev_sell is not None and abs(current_sell - prev_sell) > 0.0001) or \
-                            (current_sell is None) != (prev_sell is None)
-            
-            # Якщо хоча б одне значення відрізняється - знайшли baseline для порівняння
-            if buy_different or sell_different:
-                return {
-                    "buy": prev_buy,
-                    "sell": prev_sell
-                }
+            # Порівнюємо залежно від типу
+            if compare_value_type == "buy":
+                # Для BUY: порівнюємо тільки buy значення для skip-duplicate
+                buy_different = (current_buy is not None and prev_buy is not None and abs(current_buy - prev_buy) > 0.0001) or \
+                               (current_buy is None) != (prev_buy is None)
+                if buy_different:
+                    return {
+                        "buy": prev_buy,
+                        "sell": prev_sell
+                    }
+            elif compare_value_type == "sell":
+                # Для SELL: порівнюємо тільки sell значення для skip-duplicate
+                sell_different = (current_sell is not None and prev_sell is not None and abs(current_sell - prev_sell) > 0.0001) or \
+                                (current_sell is None) != (prev_sell is None)
+                if sell_different:
+                    return {
+                        "buy": prev_buy,
+                        "sell": prev_sell
+                    }
+            else:
+                # Старий режим "both": порівнюємо обидва значення
+                buy_different = (current_buy is not None and prev_buy is not None and abs(current_buy - prev_buy) > 0.0001) or \
+                               (current_buy is None) != (prev_buy is None)
+                sell_different = (current_sell is not None and prev_sell is not None and abs(current_sell - prev_sell) > 0.0001) or \
+                                (current_sell is None) != (prev_sell is None)
+                
+                # Якщо хоча б одне значення відрізняється - знайшли baseline для порівняння
+                if buy_different or sell_different:
+                    return {
+                        "buy": prev_buy,
+                        "sell": prev_sell
+                    }
         
         # Якщо всі попередні значення ідентичні - тренд стабільний
         return None
@@ -332,10 +356,12 @@ async def get_best_rates(
                 current_sell_value = current_buy_rate.get("sell") if current_buy_rate else None
                 
                 # Find previous rate for buy (skip duplicates)
+                # Для BUY порівнюємо тільки buy значення при skip-duplicate
                 if buy_channel_id:
                     prev_buy_rate = find_previous_rate(
                         buy_channel_id, currency_a, currency_b,
-                        current_buy_value, current_sell_value, best_buy["exchanger"]
+                        current_buy_value, current_sell_value, best_buy["exchanger"],
+                        compare_value_type="buy"
                     )
                     
                     # Calculate trend and changes for buy
@@ -380,10 +406,12 @@ async def get_best_rates(
                 current_buy_value_for_sell = current_sell_rate.get("buy") if current_sell_rate else None
                 
                 # Find previous rate for sell (skip duplicates)
+                # Для SELL порівнюємо тільки sell значення при skip-duplicate
                 if sell_channel_id:
                     prev_sell_rate = find_previous_rate(
                         sell_channel_id, currency_a, currency_b,
-                        current_buy_value_for_sell, current_sell_value, best_sell["exchanger"]
+                        current_buy_value_for_sell, current_sell_value, best_sell["exchanger"],
+                        compare_value_type="sell"
                     )
                     
                     # Calculate trend and changes for sell
