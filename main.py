@@ -253,10 +253,15 @@ async def get_best_rates(
         
         # Group by currency pair and calculate best rates
         results = {}
+        # Store full rate records for trend calculation
+        rate_records_map = {}  # Maps (pair_key, exchanger) -> full rate record
         
         for unique_key, rate in latest_rates.items():
             pair_key = f"{rate['currency_a']}/{rate['currency_b']}"
             channel_name = rate.get("channel_name", "Unknown")
+            
+            # Store full rate record for later trend calculation
+            rate_records_map[(pair_key, channel_name)] = rate
             
             if pair_key not in results:
                 results[pair_key] = {
@@ -309,11 +314,16 @@ async def get_best_rates(
                         buy_channel_id = ch_id
                         break
                 
+                # Get full rate record for best buy (to get both buy and sell for duplicate skipping)
+                current_buy_rate = rate_records_map.get((pair_key, best_buy["exchanger"]))
+                current_buy_value = best_buy["value"]
+                current_sell_value = current_buy_rate.get("sell") if current_buy_rate else None
+                
                 # Find previous rate for buy (skip duplicates)
                 if buy_channel_id:
                     prev_buy_rate = find_previous_rate(
                         buy_channel_id, currency_a, currency_b,
-                        best_buy["value"], None, best_buy["exchanger"]
+                        current_buy_value, current_sell_value, best_buy["exchanger"]
                     )
                     
                     # Calculate trend and changes for buy
@@ -352,11 +362,16 @@ async def get_best_rates(
                         sell_channel_id = ch_id
                         break
                 
+                # Get full rate record for best sell (to get both buy and sell for duplicate skipping)
+                current_sell_rate = rate_records_map.get((pair_key, best_sell["exchanger"]))
+                current_sell_value = best_sell["value"]
+                current_buy_value_for_sell = current_sell_rate.get("buy") if current_sell_rate else None
+                
                 # Find previous rate for sell (skip duplicates)
                 if sell_channel_id:
                     prev_sell_rate = find_previous_rate(
                         sell_channel_id, currency_a, currency_b,
-                        None, best_sell["value"], best_sell["exchanger"]
+                        current_buy_value_for_sell, current_sell_value, best_sell["exchanger"]
                     )
                     
                     # Calculate trend and changes for sell

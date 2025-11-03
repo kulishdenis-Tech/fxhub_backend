@@ -11,7 +11,7 @@ print("=" * 70)
 for pair in ["USD/UAH", "EUR/UAH"]:
     try:
         print(f"\n📊 Тестування для {pair}...")
-        r = requests.get(url, params={"currencies": pair}, timeout=30)
+        r = requests.get(url, params={"currencies": pair}, timeout=60)
         
         if r.status_code != 200:
             print(f"   ❌ Помилка: HTTP {r.status_code}")
