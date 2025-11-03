@@ -6,9 +6,13 @@ FastAPI backend service for currency exchange rate aggregation and API access.
 
 ## 🚀 Features
 
-- **Best Rates API**: Get the best buy/sell rates per currency pair
+- **Best Rates API**: Get the best buy/sell rates per currency pair with pagination
+- **Rates History**: Historical data for charts and graphs
 - **Exchanger List**: Retrieve all available exchangers
 - **Currency Pairs**: List all unique currency pairs
+- **CORS Enabled**: Ready for Flutter mobile app integration
+- **Health Check**: Monitoring endpoint for status verification
+- **Standardized Responses**: Consistent JSON format (success/data/meta)
 - **Supabase Integration**: Fully integrated with Supabase database
 - **Render Ready**: Configured for easy deployment on Render.com
 - **Automated Testing**: Production testing and deployment automation
@@ -107,17 +111,36 @@ GET http://127.0.0.1:8000/rates/bestrate?currencies=USD/UAH,EUR/UAH&exchangers=G
 
 **Example Response:**
 ```json
-[
-  {
-    "currency": "USD/UAH",
-    "buy_best": 41.55,
-    "buy_exchanger": "Garant Money",
-    "buy_timestamp": "2025-11-03T15:10:00Z",
-    "sell_best": 41.45,
-    "sell_exchanger": "Mirvalut",
-    "sell_timestamp": "2025-11-03T14:55:00Z"
+{
+  "success": true,
+  "data": [
+    {
+      "currency": "USD/UAH",
+      "buy_best": 41.55,
+      "buy_exchanger": "Garant Money",
+      "buy_timestamp": "2025-11-03T15:10:00Z",
+      "sell_best": 41.45,
+      "sell_exchanger": "Mirvalut",
+      "sell_timestamp": "2025-11-03T14:55:00Z"
+    }
+  ],
+  "meta": {
+    "total": 13,
+    "limit": null,
+    "offset": 0,
+    "returned": 13
   }
-]
+}
+```
+
+**Pagination Parameters:**
+- `limit` (optional): Number of results per page (1-100)
+- `offset` (optional): Starting position for pagination (default: 0)
+
+**Example with pagination:**
+```bash
+GET /rates/bestrate?limit=5&offset=0  # First 5 results
+GET /rates/bestrate?limit=5&offset=5  # Next 5 results
 ```
 
 ### `/exchangers/list`
@@ -132,7 +155,13 @@ GET http://127.0.0.1:8000/exchangers/list
 **Example Response:**
 ```json
 {
-  "exchangers": ["Garant Money", "Mirvalut", "KytGroup", "Obmen24", "FinanceUA"]
+  "success": true,
+  "data": {
+    "exchangers": ["CHANGE_KYIV", "GARANT", "KIT_GROUP", "MIRVALUTY", "SWAPS", "UACOIN", "VALUTA_KIEV"]
+  },
+  "meta": {
+    "count": 7
+  }
 }
 ```
 
@@ -148,13 +177,82 @@ GET http://127.0.0.1:8000/currencies/list
 **Example Response:**
 ```json
 {
-  "currencies_a": ["USD", "EUR", "PLN", "GBP"],
-  "currencies_b": ["UAH", "USD"],
-  "pairs": [
-    {"base": "EUR", "quote": "UAH"},
-    {"base": "USD", "quote": "EUR"},
-    {"base": "USD", "quote": "UAH"}
-  ]
+  "success": true,
+  "data": {
+    "currencies_a": ["USD", "EUR", "PLN", "GBP"],
+    "currencies_b": ["UAH", "USD"],
+    "pairs": [
+      {"base": "EUR", "quote": "UAH"},
+      {"base": "USD", "quote": "EUR"},
+      {"base": "USD", "quote": "UAH"}
+    ]
+  },
+  "meta": {
+    "currencies_a_count": 9,
+    "currencies_b_count": 2,
+    "pairs_count": 13
+  }
+}
+```
+
+### `/rates/history`
+
+Returns historical rates data for charts/graphs.
+
+**Query Parameters:**
+- `currency_pair` (required): Currency pair (e.g., `USD/UAH`)
+- `exchanger` (optional): Filter by specific exchanger
+- `days` (optional): Number of days of history (1-30, default: 7)
+- `interval` (optional): Data aggregation interval - `hour` or `day` (default: `hour`)
+
+**Example Request:**
+```bash
+GET /rates/history?currency_pair=USD/UAH&days=7&interval=hour
+GET /rates/history?currency_pair=EUR/UAH&exchanger=GARANT&days=30&interval=day
+```
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "currency": "USD/UAH",
+    "period_days": 7,
+    "interval": "hour",
+    "data_points": [
+      {
+        "timestamp": "2025-11-03T10:00:00Z",
+        "buy": 41.95,
+        "sell": 42.00,
+        "exchanger": "VALUTA_KIEV"
+      },
+      {
+        "timestamp": "2025-11-03T11:00:00Z",
+        "buy": 41.94,
+        "sell": 41.99,
+        "exchanger": "GARANT"
+      }
+    ]
+  },
+  "meta": {
+    "count": 24,
+    "from_date": "2025-10-27T12:00:00Z",
+    "to_date": "2025-11-03T12:00:00Z"
+  }
+}
+```
+
+### `/health`
+
+Health check endpoint for monitoring and status verification.
+
+**Example Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2025-11-03T12:00:00Z",
+  "database": "connected",
+  "version": "1.0.0"
 }
 ```
 

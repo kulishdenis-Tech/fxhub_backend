@@ -11,7 +11,11 @@ def get_best_rates():
     try:
         response = requests.get(f"{PRODUCTION_URL}/rates/bestrate", timeout=10)
         if response.status_code == 200:
-            return response.json()
+            data = response.json()
+            # Адаптація до нового формату (success/data/meta)
+            if isinstance(data, dict) and "data" in data:
+                return data.get("data", [])
+            return data if isinstance(data, list) else []
         else:
             print(f"❌ Помилка API: {response.status_code}")
             return None
