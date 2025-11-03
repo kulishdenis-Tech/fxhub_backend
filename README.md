@@ -2,25 +2,31 @@
 
 FastAPI backend service for currency exchange rate aggregation and API access.
 
+**🌐 Production URL**: https://fxhub-backend.onrender.com
+
 ## 🚀 Features
 
 - **Best Rates API**: Get the best buy/sell rates per currency pair
 - **Exchanger List**: Retrieve all available exchangers
-- **Currency Pairs**: List all available currency pairs
+- **Currency Pairs**: List all unique currency pairs
 - **Supabase Integration**: Fully integrated with Supabase database
 - **Render Ready**: Configured for easy deployment on Render.com
+- **Automated Testing**: Production testing and deployment automation
 
 ## 📁 Project Structure
 
 ```
 fxhub_backend/
-├── main.py              # FastAPI application with endpoints
-├── supabase_client.py   # Supabase client configuration
-├── requirements.txt     # Python dependencies
-├── .env.example        # Environment variables template
-├── .gitignore          # Git ignore rules
-├── render.yaml         # Render deployment configuration
-└── README.md           # This file
+├── main.py                  # FastAPI application with endpoints
+├── supabase_client.py       # Supabase client configuration
+├── requirements.txt         # Python dependencies
+├── .env.example            # Environment variables template
+├── .gitignore              # Git ignore rules
+├── render.yaml             # Render deployment configuration
+├── test_production.py      # Automated production testing
+├── auto_fix_and_deploy.py  # Automated testing and deployment
+├── AUTOMATION_GUIDE.md     # Automation guide
+└── README.md               # This file
 ```
 
 ## 🔹 Local Development
@@ -154,17 +160,9 @@ GET http://127.0.0.1:8000/currencies/list
 
 ## 🔹 GitHub Integration
 
-### Quick Setup (Автоматично)
+Repository is already set up: https://github.com/kulishdenis-Tech/fxhub_backend
 
-Якщо Git репозиторій вже ініціалізовано, просто запусти:
-
-```bash
-python setup_github.py
-```
-
-Скрипт перевірить налаштування та допоможе з push на GitHub.
-
-### Manual Setup
+### Manual Setup (if needed)
 
 1. **Create a new repository on GitHub:**
    - Go to https://github.com/new
@@ -172,7 +170,6 @@ python setup_github.py
    - Description: `FastAPI backend for FX Hub with Supabase integration`
    - Choose public or private
    - **Do NOT** initialize with README, .gitignore, or license (we already have these)
-   - Click **"Create repository"**
 
 2. **Add remote and push:**
    ```bash
@@ -181,36 +178,15 @@ python setup_github.py
    git push -u origin main
    ```
 
-   > **Note**: Якщо Git запитує credentials, використай Personal Access Token замість пароля.
-   > Створити токен: GitHub Settings → Developer settings → Personal access tokens → Generate new token (classic) → вибери scope `repo`
-
-### Verify `.gitignore`
-
-Before pushing, ensure `.env` is listed in `.gitignore`:
-```bash
-cat .gitignore
-```
-
-The `.gitignore` file should contain:
-```
-.env
-__pycache__/
-*.pyc
-...
-```
+   > **Note**: If Git asks for credentials, use Personal Access Token instead of password.
+   > Create token: GitHub Settings → Developer settings → Personal access tokens → Generate new token (classic) → select `repo` scope
 
 ## 🔹 Render Deployment
 
-### Prerequisites
-
-- GitHub account
-- Render.com account (free tier available)
-- Repository pushed to GitHub
-
-### Deployment Steps
+### Quick Deployment (2 minutes)
 
 1. **Go to Render Dashboard:**
-   Visit https://render.com and sign in
+   Visit https://dashboard.render.com and sign in
 
 2. **Create New Web Service:**
    - Click **"New +"** → **"Web Service"**
@@ -219,11 +195,7 @@ __pycache__/
 
 3. **Configure Service:**
    - **Name**: `fxhub-backend` (or your preferred name)
-   - **Environment**: `Python 3`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-   
-   > **Note**: Render will auto-detect `render.yaml` if present, which simplifies this step.
+   - Render will automatically detect `render.yaml` and use it
 
 4. **Add Environment Variables:**
    In the Environment Variables section, add:
@@ -232,15 +204,15 @@ __pycache__/
    - **Key**: `SUPABASE_KEY`
      **Value**: `your_service_role_key`
    
-   > **Note**: Make sure to use your actual Supabase credentials (not the example values).
+   > ⚠️ **IMPORTANT**: Use **Service Role Key**, not Anon Key!
+   > 
+   > To find Service Role Key:
+   > 1. Supabase Dashboard → Settings → API
+   > 2. Find "Project API keys" section
+   > 3. Copy **"service_role"** key (secret)
 
 5. **Deploy:**
    - Click **"Create Web Service"**
-   - Render will automatically:
-     - Clone your repository
-     - Install dependencies from `requirements.txt`
-     - Start the application using the start command
-   
    - Wait for deployment to complete (usually 1-2 minutes)
 
 6. **Access Your API:**
@@ -264,9 +236,33 @@ __pycache__/
    curl https://fxhub-backend.onrender.com/currencies/list
    ```
 
+### Automatic Deployment
+
+Render automatically deploys on every push to `main` branch.
+
 ### Render Configuration File
 
 The `render.yaml` file automates the deployment configuration. Render will use it automatically when you connect the repository.
+
+## 🤖 Automation
+
+The project includes automation scripts for testing and deployment:
+
+### `test_production.py`
+Automated testing of production API endpoints.
+
+```bash
+python test_production.py
+```
+
+### `auto_fix_and_deploy.py`
+Full automation cycle: test → commit → push → wait for deployment → re-test.
+
+```bash
+python auto_fix_and_deploy.py
+```
+
+For detailed automation guide, see `AUTOMATION_GUIDE.md`.
 
 ## 🔧 Troubleshooting
 
@@ -292,6 +288,33 @@ The `render.yaml` file automates the deployment configuration. Render will use i
 **Issue**: API returns 500 errors
 - **Solution**: Verify Supabase credentials in Render environment variables, check database connection
 
+**Issue**: "Port already in use"
+- **Solution**: Render automatically uses `$PORT` variable. Ensure start command contains `--port $PORT`
+
+### GitHub Issues
+
+**Issue**: Push fails
+- **Solution**: Check if repository exists on GitHub, use Personal Access Token instead of password
+
+## 📊 Monitoring
+
+Render Dashboard shows:
+- **Logs**: Real-time server logs
+- **Metrics**: CPU, Memory, Network usage
+- **Events**: Deployment history
+
+## 🔄 Updates
+
+To update the service:
+1. Make changes locally
+2. Commit and push to GitHub:
+   ```bash
+   git add .
+   git commit -m "Update: description of changes"
+   git push origin main
+   ```
+3. Render will automatically detect changes and trigger new deployment
+
 ## 📝 License
 
 This project is part of the FX Hub ecosystem.
@@ -299,3 +322,11 @@ This project is part of the FX Hub ecosystem.
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 🔗 Links
+
+- **GitHub Repository**: https://github.com/kulishdenis-Tech/fxhub_backend
+- **Production API**: https://fxhub-backend.onrender.com
+- **API Documentation**: https://fxhub-backend.onrender.com/docs
+- **Render Dashboard**: https://dashboard.render.com
+- **Supabase Dashboard**: https://supabase.com/dashboard
