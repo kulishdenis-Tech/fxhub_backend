@@ -5,10 +5,22 @@ from typing import Optional, List
 from supabase_client import supabase
 from datetime import datetime, timedelta
 import logging
+import threading
 
 # Налаштування логування
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import and start keep-alive background thread (before app initialization)
+try:
+    from keep_alive import keep_alive
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    logger.info("🚀 Keep-alive background thread started")
+except Exception as e:
+    logger.warning(f"⚠️  Could not start keep-alive thread: {e}")
+
+app = FastAPI(title="FX Hub Backend", version="1.0.0")
 
 
 def find_previous_rate(channel_id: int, currency_a: str, currency_b: str, current_buy: Optional[float], current_sell: Optional[float], channel_name: str):
