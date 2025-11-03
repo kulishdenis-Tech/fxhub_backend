@@ -10,6 +10,114 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def find_previous_rate(channel_id: int, currency_a: str, currency_b: str, current_buy: Optional[float], current_sell: Optional[float], channel_name: str):
+    """
+    Знаходить попередній запис курсу для конкретного обмінника та валютної пари.
+    
+    Логіка:
+    1. Запитуємо останні 10 записів для цього обмінника та пари (відсортовані за timestamp DESC)
+    2. Пропускаємо дублікати (де buy і sell рівні поточним значенням)
+    3. Зупиняємося при першому записі, де хоча б одне значення відрізняється
+    4. Якщо всі попередні значення ідентичні → повертаємо None (trend = "stable")
+    
+    Args:
+        channel_id: ID обмінника (channel_id в таблиці rates)
+        currency_a: Перша валюта пари (напр. "USD")
+        currency_b: Друга валюта пари (напр. "UAH")
+        current_buy: Поточне значення buy
+        current_sell: Поточне значення sell
+        channel_name: Назва обмінника (для логування)
+    
+    Returns:
+        dict з полями "buy" та "sell" (попередні значення) або None якщо всі однакові
+    """
+    try:
+        # Запитуємо останні 10 записів для цього обмінника та валютної пари
+        query = supabase.table("rates").select(
+            "buy, sell, edited"
+        ).eq("channel_id", channel_id).eq("currency_a", currency_a).eq("currency_b", currency_b).order("edited", desc=True).limit(10)
+        
+        response = query.execute()
+        
+        if not response.data or len(response.data) < 2:
+            # Немає попередніх записів або лише один запис
+            return None
+        
+        # Пропускаємо перший запис (це поточний, він має бути першим через DESC order)
+        # Ітеруємо починаючи з другого запису
+        for record in response.data[1:]:  # Пропускаємо перший (поточний)
+            prev_buy = record.get("buy")
+            prev_sell = record.get("sell")
+            
+            # Перевіряємо чи поточні значення відрізняються від попередніх
+            buy_different = (current_buy is not None and prev_buy is not None and abs(current_buy - prev_buy) > 0.0001) or \
+                           (current_buy is None) != (prev_buy is None)
+            sell_different = (current_sell is not None and prev_sell is not None and abs(current_sell - prev_sell) > 0.0001) or \
+                            (current_sell is None) != (prev_sell is None)
+            
+            # Якщо хоча б одне значення відрізняється - знайшли baseline для порівняння
+            if buy_different or sell_different:
+                return {
+                    "buy": prev_buy,
+                    "sell": prev_sell
+                }
+        
+        # Якщо всі попередні значення ідентичні - тренд стабільний
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Error finding previous rate for {channel_name} {currency_a}/{currency_b}: {e}")
+        return None
+
+
+def calculate_trend_and_changes(current_value: Optional[float], previous_value: Optional[float]) -> dict:
+    """
+    Розраховує тренд та зміни для одного значення (buy або sell).
+    
+    Args:
+        current_value: Поточне значення
+        previous_value: Попереднє значення
+    
+    Returns:
+        dict з полями:
+        - trend: "up", "down", або "stable"
+        - change_abs: Абсолютна зміна (округлена до 2 знаків)
+        - change_pct: Відсоткова зміна (округлена до 2 знаків)
+    """
+    # Якщо немає попереднього значення або поточне значення None → стабільний
+    if previous_value is None or current_value is None:
+        return {
+            "trend": "stable",
+            "change_abs": 0.0,
+            "change_pct": 0.0
+        }
+    
+    # Розраховуємо абсолютну зміну
+    change_abs = round(current_value - previous_value, 2)
+    
+    # Розраховуємо відсоткову зміну
+    if previous_value != 0:
+        change_pct = round((change_abs / previous_value) * 100, 2)
+    else:
+        change_pct = 0.0
+    
+    # Визначаємо тренд
+    if change_abs > 0.0001:  # Невеликий поріг для уникнення floating point помилок
+        trend = "up"
+    elif change_abs < -0.0001:
+        trend = "down"
+    else:
+        trend = "stable"
+        change_abs = 0.0  # Округлюємо до 0 якщо зміна мінімальна
+        change_pct = 0.0
+    
+    return {
+        "trend": trend,
+        "change_abs": change_abs,
+        "change_pct": change_pct
+    }
+
 app = FastAPI(title="FX Hub Backend", version="1.0.0")
 
 # CORS middleware для Flutter мобільного додатку
@@ -171,7 +279,7 @@ async def get_best_rates(
                     "timestamp": rate.get("edited")
                 })
         
-        # Calculate best rates
+        # Calculate best rates and trend analytics
         final_results = []
         for pair_key, data in results.items():
             buy_records = data["buy_records"]
@@ -180,21 +288,98 @@ async def get_best_rates(
             if not buy_records and not sell_records:
                 continue
             
+            # Parse currency pair
+            currency_a, currency_b = pair_key.split("/")
+            
             result = {
                 "currency": pair_key
             }
             
+            # Process buy rates
             if buy_records:
                 best_buy = max(buy_records, key=lambda x: x["value"])
                 result["buy_best"] = best_buy["value"]
                 result["buy_exchanger"] = best_buy["exchanger"]
                 result["buy_timestamp"] = best_buy["timestamp"]
+                
+                # Find channel_id for best buy exchanger
+                buy_channel_id = None
+                for ch_id, name in channel_map.items():
+                    if name == best_buy["exchanger"]:
+                        buy_channel_id = ch_id
+                        break
+                
+                # Find previous rate for buy (skip duplicates)
+                if buy_channel_id:
+                    prev_buy_rate = find_previous_rate(
+                        buy_channel_id, currency_a, currency_b,
+                        best_buy["value"], None, best_buy["exchanger"]
+                    )
+                    
+                    # Calculate trend and changes for buy
+                    if prev_buy_rate and prev_buy_rate.get("buy") is not None:
+                        buy_analytics = calculate_trend_and_changes(
+                            best_buy["value"], prev_buy_rate["buy"]
+                        )
+                    else:
+                        # All previous rates identical or no previous record
+                        buy_analytics = {
+                            "trend": "stable",
+                            "change_abs": 0.0,
+                            "change_pct": 0.0
+                        }
+                    
+                    result["buy_trend"] = buy_analytics["trend"]
+                    result["buy_change_abs"] = buy_analytics["change_abs"]
+                    result["buy_change_pct"] = buy_analytics["change_pct"]
+                else:
+                    # Channel not found - set defaults
+                    result["buy_trend"] = "stable"
+                    result["buy_change_abs"] = 0.0
+                    result["buy_change_pct"] = 0.0
             
+            # Process sell rates
             if sell_records:
                 best_sell = min(sell_records, key=lambda x: x["value"])
                 result["sell_best"] = best_sell["value"]
                 result["sell_exchanger"] = best_sell["exchanger"]
                 result["sell_timestamp"] = best_sell["timestamp"]
+                
+                # Find channel_id for best sell exchanger
+                sell_channel_id = None
+                for ch_id, name in channel_map.items():
+                    if name == best_sell["exchanger"]:
+                        sell_channel_id = ch_id
+                        break
+                
+                # Find previous rate for sell (skip duplicates)
+                if sell_channel_id:
+                    prev_sell_rate = find_previous_rate(
+                        sell_channel_id, currency_a, currency_b,
+                        None, best_sell["value"], best_sell["exchanger"]
+                    )
+                    
+                    # Calculate trend and changes for sell
+                    if prev_sell_rate and prev_sell_rate.get("sell") is not None:
+                        sell_analytics = calculate_trend_and_changes(
+                            best_sell["value"], prev_sell_rate["sell"]
+                        )
+                    else:
+                        # All previous rates identical or no previous record
+                        sell_analytics = {
+                            "trend": "stable",
+                            "change_abs": 0.0,
+                            "change_pct": 0.0
+                        }
+                    
+                    result["sell_trend"] = sell_analytics["trend"]
+                    result["sell_change_abs"] = sell_analytics["change_abs"]
+                    result["sell_change_pct"] = sell_analytics["change_pct"]
+                else:
+                    # Channel not found - set defaults
+                    result["sell_trend"] = "stable"
+                    result["sell_change_abs"] = 0.0
+                    result["sell_change_pct"] = 0.0
             
             final_results.append(result)
         
