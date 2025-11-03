@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from supabase_client import supabase
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 # Налаштування логування
@@ -54,7 +54,9 @@ async def health_check():
 async def get_best_rates(
     currencies: Optional[str] = Query(None, description="Comma-separated currency pairs (e.g., USD/UAH,EUR/UAH)"),
     exchangers: Optional[str] = Query(None, description="Comma-separated exchanger names"),
-    city: Optional[str] = Query(None, description="Optional city filter")
+    city: Optional[str] = Query(None, description="Optional city filter"),
+    limit: Optional[int] = Query(None, ge=1, le=100, description="Limit number of results (for pagination)"),
+    offset: Optional[int] = Query(0, ge=0, description="Offset for pagination")
 ):
     """
     Returns best buy/sell rates per currency pair.
@@ -196,9 +198,28 @@ async def get_best_rates(
             
             final_results.append(result)
         
-        # If no filters, return top global best rates (all results)
-        # If filters applied, return filtered results
-        return JSONResponse(status_code=200, content=final_results)
+        # Apply pagination if requested
+        total_count = len(final_results)
+        if limit:
+            start = offset or 0
+            end = start + limit
+            paginated_results = final_results[start:end]
+        else:
+            paginated_results = final_results
+            start = 0
+            end = total_count
+        
+        # Return with metadata for Flutter
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "data": paginated_results,
+            "meta": {
+                "total": total_count,
+                "limit": limit,
+                "offset": start,
+                "returned": len(paginated_results)
+            }
+        })
         
     except Exception as e:
         logger.error(f"Error in get_best_rates: {e}", exc_info=True)
@@ -225,10 +246,186 @@ async def get_exchangers_list():
         
         return JSONResponse(
             status_code=200,
-            content={"exchangers": exchanger_names}
+            content={
+                "success": True,
+                "data": {"exchangers": exchanger_names},
+                "meta": {"count": len(exchanger_names)}
+            }
         )
     except Exception as e:
         logger.error(f"Error in get_exchangers_list: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "Internal server error",
+                "message": str(e)
+            }
+        )
+
+
+@app.get("/rates/history")
+async def get_rates_history(
+    currency_pair: str = Query(..., description="Currency pair (e.g., USD/UAH)"),
+    exchanger: Optional[str] = Query(None, description="Optional exchanger name filter"),
+    days: int = Query(7, ge=1, le=30, description="Number of days of history (1-30)"),
+    interval: Optional[str] = Query("hour", regex="^(hour|day)$", description="Data aggregation interval")
+):
+    """
+    Returns historical rates data for charts/graphs.
+    
+    Returns data points with buy/sell rates over time for a specific currency pair.
+    """
+    try:
+        # Parse currency pair
+        if "/" not in currency_pair:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": "Invalid currency pair format",
+                    "message": "Use format: USD/UAH"
+                }
+            )
+        
+        currency_a, currency_b = currency_pair.split("/")
+        currency_a = currency_a.strip().upper()
+        currency_b = currency_b.strip().upper()
+        
+        # Get channel mapping
+        channels_resp = supabase.table("channels").select("id, name").execute()
+        channel_map = {ch["id"]: ch["name"] for ch in channels_resp.data}
+        
+        # Build query
+        query = supabase.table("rates").select(
+            "currency_a, currency_b, buy, sell, edited, channel_id"
+        ).eq("currency_a", currency_a).eq("currency_b", currency_b)
+        
+        # Apply exchanger filter if provided
+        if exchanger:
+            filtered_channel_ids = [
+                ch_id for ch_id, name in channel_map.items() if name == exchanger.strip()
+            ]
+            if filtered_channel_ids:
+                query = query.in_("channel_id", filtered_channel_ids)
+            else:
+                return JSONResponse(status_code=200, content={
+                    "success": True,
+                    "data": {
+                        "currency": currency_pair,
+                        "period_days": days,
+                        "interval": interval,
+                        "data_points": []
+                    },
+                    "meta": {"count": 0}
+                })
+        
+        # Calculate date range
+        from_date = datetime.utcnow()
+        # Supabase PostgREST uses ISO format for date filtering
+        # We'll filter in Python for simplicity, or use Supabase's date functions
+        
+        # Execute query - get all records for the period
+        response = query.order("edited", desc=True).execute()
+        
+        if not response.data:
+            return JSONResponse(status_code=200, content={
+                "success": True,
+                "data": {
+                    "currency": currency_pair,
+                    "period_days": days,
+                    "interval": interval,
+                    "data_points": []
+                },
+                "meta": {"count": 0}
+            })
+        
+        # Filter by date range and group by interval
+        cutoff_date = datetime.utcnow()
+        if days > 0:
+            from datetime import timedelta
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+        
+        data_points = []
+        seen_times = set()  # Для дедуплікації
+        
+        for rate in response.data:
+            edited_str = rate.get("edited")
+            if not edited_str:
+                continue
+            
+            # Parse timestamp
+            try:
+                if isinstance(edited_str, str):
+                    if "T" in edited_str:
+                        rate_time = datetime.fromisoformat(edited_str.replace("Z", "+00:00"))
+                    else:
+                        rate_time = datetime.strptime(edited_str, "%Y-%m-%d %H:%M:%S")
+                else:
+                    rate_time = edited_str
+                
+                # Convert to UTC if timezone-aware
+                if rate_time.tzinfo:
+                    rate_time = rate_time.replace(tzinfo=None)
+                
+                # Filter by date range
+                if rate_time < cutoff_date:
+                    continue
+                
+                # Group by interval
+                if interval == "hour":
+                    time_key = rate_time.replace(minute=0, second=0, microsecond=0)
+                else:  # day
+                    time_key = rate_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                # Deduplicate and aggregate
+                time_iso = time_key.isoformat() + "Z"
+                
+                if time_iso not in seen_times:
+                    channel_id = rate.get("channel_id")
+                    channel_name = channel_map.get(channel_id, "Unknown")
+                    
+                    data_points.append({
+                        "timestamp": time_iso,
+                        "buy": rate.get("buy"),
+                        "sell": rate.get("sell"),
+                        "exchanger": channel_name
+                    })
+                    seen_times.add(time_iso)
+                else:
+                    # If multiple records for same interval, keep best rates
+                    for dp in data_points:
+                        if dp["timestamp"] == time_iso:
+                            if rate.get("buy") and (dp["buy"] is None or rate.get("buy") > dp["buy"]):
+                                dp["buy"] = rate.get("buy")
+                                dp["exchanger"] = channel_map.get(rate.get("channel_id"), "Unknown")
+                            if rate.get("sell") and (dp["sell"] is None or rate.get("sell") < dp["sell"]):
+                                dp["sell"] = rate.get("sell")
+                            break
+            except Exception as e:
+                logger.warning(f"Error parsing timestamp {edited_str}: {e}")
+                continue
+        
+        # Sort by timestamp
+        data_points.sort(key=lambda x: x["timestamp"])
+        
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "data": {
+                "currency": currency_pair,
+                "period_days": days,
+                "interval": interval,
+                "data_points": data_points
+            },
+            "meta": {
+                "count": len(data_points),
+                "from_date": cutoff_date.isoformat() + "Z",
+                "to_date": datetime.utcnow().isoformat() + "Z"
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_rates_history: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={
@@ -268,12 +465,22 @@ async def get_currencies_list():
                 })
                 seen_pairs.add(pair_key)
         
+        sorted_pairs = sorted(pairs, key=lambda x: (x["base"], x["quote"]))
+        
         return JSONResponse(
             status_code=200,
             content={
-                "currencies_a": sorted(list(currencies_a)),
-                "currencies_b": sorted(list(currencies_b)),
-                "pairs": sorted(pairs, key=lambda x: (x["base"], x["quote"]))
+                "success": True,
+                "data": {
+                    "currencies_a": sorted(list(currencies_a)),
+                    "currencies_b": sorted(list(currencies_b)),
+                    "pairs": sorted_pairs
+                },
+                "meta": {
+                    "currencies_a_count": len(currencies_a),
+                    "currencies_b_count": len(currencies_b),
+                    "pairs_count": len(sorted_pairs)
+                }
             }
         )
     except Exception as e:
