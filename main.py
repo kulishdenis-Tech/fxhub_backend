@@ -481,9 +481,9 @@ async def get_exchangers_list():
     try:
         # Get all unique channel names that have rates
         response = supabase.table("channels").select("name").execute()
-        
-        exchanger_names = sorted(set([ch["name"] for ch in response.data]))
-        
+
+        exchanger_names = sorted(set([ch["name"] for ch in response.data]))     
+
         return JSONResponse(
             status_code=200,
             content={
@@ -493,7 +493,7 @@ async def get_exchangers_list():
             }
         )
     except Exception as e:
-        logger.error(f"Error in get_exchangers_list: {e}", exc_info=True)
+        logger.error(f"Error in get_exchangers_list: {e}", exc_info=True)       
         return JSONResponse(
             status_code=500,
             content={
@@ -504,11 +504,88 @@ async def get_exchangers_list():
         )
 
 
+@app.get("/exchangers/pairs")
+async def get_exchangers_pairs():
+    """
+    Returns a mapping of all exchangers and the currency pairs they support.
+    
+    This endpoint is useful for dependent filtering logic in Flutter History Screen.
+    Each exchanger entry contains the list of currency pairs available for that exchanger.
+    """
+    try:
+        # Get channel mapping (id -> name)
+        channels_resp = supabase.table("channels").select("id, name").execute()
+        channel_map = {ch["id"]: ch["name"] for ch in channels_resp.data}
+        
+        # Get all rates with channel_id and currency pairs
+        response = supabase.table("rates").select("channel_id, currency_a, currency_b").execute()
+        
+        # Build mapping: exchanger -> set of currency pairs
+        exchanger_pairs_map = {}
+        all_pairs_set = set()
+        
+        for rate in response.data:
+            channel_id = rate.get("channel_id")
+            currency_a = rate.get("currency_a")
+            currency_b = rate.get("currency_b")
+            
+            # Skip null or empty values
+            if not channel_id or not currency_a or not currency_b:
+                continue
+            
+            exchanger_name = channel_map.get(channel_id)
+            if not exchanger_name:
+                continue
+            
+            # Create currency pair string
+            pair = f"{currency_a}/{currency_b}"
+            
+            # Add to exchanger's set of pairs
+            if exchanger_name not in exchanger_pairs_map:
+                exchanger_pairs_map[exchanger_name] = set()
+            
+            exchanger_pairs_map[exchanger_name].add(pair)
+            all_pairs_set.add(pair)
+        
+        # Convert to list format and sort
+        result_data = []
+        for exchanger_name in sorted(exchanger_pairs_map.keys()):
+            pairs_list = sorted(list(exchanger_pairs_map[exchanger_name]))
+            result_data.append({
+                "exchanger": exchanger_name,
+                "pairs": pairs_list
+            })
+        
+        # Return with metadata
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "data": result_data,
+                "meta": {
+                    "total_exchangers": len(result_data),
+                    "total_pairs": len(all_pairs_set),
+                    "generated_at": datetime.utcnow().isoformat() + "Z"
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in get_exchangers_pairs: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "Database query failed",
+                "details": str(e)
+            }
+        )
+
+
 @app.get("/rates/history")
 async def get_rates_history(
     currency_pair: str = Query(..., description="Currency pair (e.g., USD/UAH)"),
     exchanger: Optional[str] = Query(None, description="Optional exchanger name filter"),
-    days: int = Query(7, ge=1, le=30, description="Number of days of history (1-30)"),
+    days: int = Query(7, ge=1, le=90, description="Number of days of history (1-90)"),
     interval: Optional[str] = Query("hour", regex="^(hour|day)$", description="Data aggregation interval")
 ):
     """
