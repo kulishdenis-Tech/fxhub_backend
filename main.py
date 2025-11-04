@@ -513,19 +513,27 @@ async def get_exchangers_pairs():
     Each exchanger entry contains the list of currency pairs available for that exchanger.
     """
     try:
-        # Get channel mapping (id -> name) and reverse mapping (name -> id)
+        # Get channel mapping (id -> name)
         channels_resp = supabase.table("channels").select("id, name").execute() 
         channel_map = {ch["id"]: ch["name"] for ch in channels_resp.data}
-        name_to_id_map = {ch["name"]: ch["id"] for ch in channels_resp.data}
         
         # Initialize mapping for ALL exchangers (even if they have no rates)
-        exchanger_pairs_map = {name: set() for name in name_to_id_map.keys()}
+        exchanger_pairs_map = {name: set() for name in channel_map.values()}
         all_pairs_set = set()
         
-        # Get all rates with channel_id and currency pairs
-        response = supabase.table("rates").select("channel_id, currency_a, currency_b").execute()
+        # For each exchanger, get the latest rates (last record per currency pair)
+        # Strategy: Get all rates, group by (channel_id, currency_a, currency_b), keep only latest per group
         
-        # Build mapping: add currency pairs to exchangers that have rates
+        # Get all rates ordered by edited DESC (latest first)
+        response = supabase.table("rates").select(
+            "channel_id, currency_a, currency_b, edited"
+        ).order("edited", desc=True).execute()
+        
+        # Track which (channel_id, currency_a, currency_b) combinations we've already seen
+        # This way we keep only the LATEST record for each combination
+        seen_combinations = set()
+        
+        # Build mapping: add currency pairs from LATEST records only
         for rate in response.data:
             channel_id = rate.get("channel_id")
             currency_a = rate.get("currency_a")
@@ -538,6 +546,16 @@ async def get_exchangers_pairs():
             exchanger_name = channel_map.get(channel_id)
             if not exchanger_name:
                 continue
+            
+            # Create unique key: (channel_id, currency_a, currency_b)
+            combination_key = (channel_id, currency_a, currency_b)
+            
+            # Skip if we've already processed this combination (we have the latest record)
+            if combination_key in seen_combinations:
+                continue
+            
+            # Mark this combination as seen
+            seen_combinations.add(combination_key)
             
             # Create currency pair string
             pair = f"{currency_a}/{currency_b}"
