@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-01-03
+
+### Added
+- `/exchangers/pairs` endpoint - Returns mapping of all exchangers and their supported currency pairs
+  - Useful for dependent filtering logic in Flutter History Screen
+  - Returns sorted list with metadata (total_exchangers, total_pairs, generated_at)
+  - Standardized response format (success, data, meta)
+- Test script `test_exchanger_pairs.py` for endpoint validation
+
 ## [1.0.0] - 2025-11-03
 
 ### Added
@@ -36,3 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rate limiting
 - Caching layer
 - Production CORS restrictions (fxhub.app domain)
+
+
+
