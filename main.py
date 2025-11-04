@@ -513,17 +513,19 @@ async def get_exchangers_pairs():
     Each exchanger entry contains the list of currency pairs available for that exchanger.
     """
     try:
-        # Get channel mapping (id -> name)
-        channels_resp = supabase.table("channels").select("id, name").execute()
+        # Get channel mapping (id -> name) and reverse mapping (name -> id)
+        channels_resp = supabase.table("channels").select("id, name").execute() 
         channel_map = {ch["id"]: ch["name"] for ch in channels_resp.data}
+        name_to_id_map = {ch["name"]: ch["id"] for ch in channels_resp.data}
+        
+        # Initialize mapping for ALL exchangers (even if they have no rates)
+        exchanger_pairs_map = {name: set() for name in name_to_id_map.keys()}
+        all_pairs_set = set()
         
         # Get all rates with channel_id and currency pairs
         response = supabase.table("rates").select("channel_id, currency_a, currency_b").execute()
         
-        # Build mapping: exchanger -> set of currency pairs
-        exchanger_pairs_map = {}
-        all_pairs_set = set()
-        
+        # Build mapping: add currency pairs to exchangers that have rates
         for rate in response.data:
             channel_id = rate.get("channel_id")
             currency_a = rate.get("currency_a")
@@ -541,9 +543,6 @@ async def get_exchangers_pairs():
             pair = f"{currency_a}/{currency_b}"
             
             # Add to exchanger's set of pairs
-            if exchanger_name not in exchanger_pairs_map:
-                exchanger_pairs_map[exchanger_name] = set()
-            
             exchanger_pairs_map[exchanger_name].add(pair)
             all_pairs_set.add(pair)
         
